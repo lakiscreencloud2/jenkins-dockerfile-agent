@@ -17,29 +17,38 @@ unclassified:
 jobs:
   - script: >
       pipelineJob('dockerfile-agent-test') {
-        description('Minimal inline declarative pipeline using a Dockerfile agent from build/.')
+        description('Android build pipeline using android-app/Dockerfile with Gradle build and APK archiving.')
         definition {
           cps {
             script("""
             pipeline {
               agent none
               stages {
-                stage('Prepare Workspace') {
+                stage('Sync Sources') {
                   agent any
                   steps {
-                    sh 'mkdir -p build'
-                    writeFile file: 'build/Dockerfile', text: '''FROM alpine\n\nRUN ls -l\n'''
+                    sh 'rm -rf android-app && mkdir -p android-app'
+                    sh 'cp -a /workspace/android-app/. android-app/'
                   }
                 }
-                stage('List Files in Container') {
+                stage('Build') {
                   agent {
                     dockerfile {
-                      dir 'build'
+                      dir 'android-app'
+                      args '-u root:root'
                     }
                   }
                   steps {
-                    echo 'Running inside our custom-built container'
-                    sh 'ls -l'
+                    dir('android-app') {
+                      sh 'chmod +x gradlew'
+                      sh './gradlew clean assembleDebug'
+                    }
+                  }
+                }
+                stage('Archive APK') {
+                  agent any
+                  steps {
+                    archiveArtifacts artifacts: 'android-app/app/build/outputs/apk/debug/*.apk', followSymlinks: false
                   }
                 }
               }
@@ -49,3 +58,4 @@ jobs:
           }
         }
       }
+

@@ -14,6 +14,7 @@ services:
       - ./jenkins.yaml:/var/jenkins_config/jenkins.yaml:ro
       - jenkins_home:/var/jenkins_home
       - jenkins-docker-certs:/certs/client:ro
+      - ./android-app:/workspace/android-app:ro
 
   docker:
     image: docker:dind

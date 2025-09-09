@@ -21,8 +21,11 @@ RUN apt-get update && \
 RUN wget --quiet --output-document=${ANDROID_SDK_ROOT}/android-sdk.zip https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_SDK_TOOLS_REV}_latest.zip && \
     unzip -qq ${ANDROID_SDK_ROOT}/android-sdk.zip -d ${ANDROID_SDK_ROOT}/cmdline-tools && \
     mv ${ANDROID_SDK_ROOT}/cmdline-tools/cmdline-tools ${ANDROID_SDK_ROOT}/cmdline-tools/latest && \
-    rm ${ANDROID_SDK_ROOT}/android-sdk.zip
+    rm ${ANDROID_SDK_ROOT}/android-sdk.zip && \
+    mkdir -p /root/.android && \
+    touch /root/.android/repositories.cfg
 
 # Use sdkmanager to accept licenses and update
 RUN yes | sdkmanager --licenses > /dev/null && \
-    yes | sdkmanager --update > /dev/null
+    yes | sdkmanager --update > /dev/null && \
+    yes | sdkmanager "platform-tools" "build-tools;${ANDROID_BUILD_TOOLS_VERSION}" "platforms;android-${ANDROID_SDK_VERSION}"
