@@ -1,0 +1,11 @@
+jobs:
+  - script: >
+      pipelineJob('docker-build-from-workspace') {
+        description('A pipeline that uses a Jenkinsfile from the workspace and a Dockerfile agent.')
+        definition {
+          cps {
+            script(readFileFromWorkspace('Jenkinsfile'))
+            sandbox()
+          }
+        }
+      }

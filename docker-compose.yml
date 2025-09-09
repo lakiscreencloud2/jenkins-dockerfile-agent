@@ -1,0 +1,29 @@
+services:
+  jenkins:
+    build:
+      context: .
+    ports:
+      - 8080:8080
+    environment:
+      - DOCKER_HOST=tcp://docker:2376
+      - DOCKER_CERT_PATH=/certs/client
+      - DOCKER_TLS_VERIFY=1
+      - CASC_JENKINS_CONFIG=/var/jenkins_config/jenkins.yaml
+    volumes:
+      - ./jenkins.yaml:/var/jenkins_config/jenkins.yaml:ro
+      - jenkins_home:/var/jenkins_home
+      - jenkins-docker-certs:/certs/client:ro
+
+  docker:
+    image: docker:dind
+    ports:
+      - 2376:2376
+    privileged: true
+    environment:
+      - DOCKER_TLS_CERTDIR=/certs
+    volumes:
+      - jenkins-docker-certs:/certs/client
+
+volumes:
+  jenkins_home:
+  jenkins-docker-certs:
