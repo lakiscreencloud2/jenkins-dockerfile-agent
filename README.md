@@ -1,6 +1,6 @@
-## Android CI with Jenkins Dockerfile Agent
+## Android App Build with Jenkins Dockerfile Agent
 
-Also with DIND + JCasC
+Also with DinD + JCasC
 
 This repository provides a minimal, repeatable setup to build an Android app inside Jenkins with Dockerfile-based Jenkins agent, also using Docker-in-Docker (dind) and Jenkins Configuration as Code (JCasC).
 
@@ -270,4 +270,4 @@ docker logs -f jenkins-dockerfile-agent-jenkins-1 | sed -u '200q'
 docker compose down -v && docker compose up -d --build
 ```
 
-This setup gives you a clean, reproducible Android CI pipeline with a jenkins Dockerfile agent and all configurations managed by code.
+This setup gives you a clean, reproducible Android build pipeline with a jenkins Dockerfile agent and all configurations managed by code.
