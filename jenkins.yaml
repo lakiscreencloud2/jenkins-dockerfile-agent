@@ -1,10 +1,50 @@
+jenkins:
+  systemMessage: "Jenkins configured automatically by JCasC."
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "admin"
+          password: "admin"
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+unclassified:
+  location:
+    url: "http://localhost:8080/"
+
 jobs:
   - script: >
-      pipelineJob('docker-build-from-workspace') {
-        description('A pipeline that uses a Jenkinsfile from the workspace and a Dockerfile agent.')
+      pipelineJob('dockerfile-agent-test') {
+        description('Minimal inline declarative pipeline using a Dockerfile agent from build/.')
         definition {
           cps {
-            script(readFileFromWorkspace('Jenkinsfile'))
+            script("""
+            pipeline {
+              agent none
+              stages {
+                stage('Prepare Workspace') {
+                  agent any
+                  steps {
+                    sh 'mkdir -p build'
+                    writeFile file: 'build/Dockerfile', text: '''FROM alpine\n\nRUN ls -l\n'''
+                  }
+                }
+                stage('List Files in Container') {
+                  agent {
+                    dockerfile {
+                      dir 'build'
+                    }
+                  }
+                  steps {
+                    echo 'Running inside our custom-built container'
+                    sh 'ls -l'
+                  }
+                }
+              }
+            }
+            """)
             sandbox()
           }
         }

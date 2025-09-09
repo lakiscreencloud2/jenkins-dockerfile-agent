@@ -20,7 +20,7 @@ RUN jenkins-plugin-cli --plugins \
     workflow-aggregator \
     docker-workflow \
     git \
-    pipeline-multibranch-defaults \
+    pipeline-model-definition \
     github-branch-source \
     job-dsl
 

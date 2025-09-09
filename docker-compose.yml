@@ -9,6 +9,7 @@ services:
       - DOCKER_CERT_PATH=/certs/client
       - DOCKER_TLS_VERIFY=1
       - CASC_JENKINS_CONFIG=/var/jenkins_config/jenkins.yaml
+      - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
     volumes:
       - ./jenkins.yaml:/var/jenkins_config/jenkins.yaml:ro
       - jenkins_home:/var/jenkins_home
@@ -23,6 +24,7 @@ services:
       - DOCKER_TLS_CERTDIR=/certs
     volumes:
       - jenkins-docker-certs:/certs/client
+      - jenkins_home:/var/jenkins_home
 
 volumes:
   jenkins_home:
