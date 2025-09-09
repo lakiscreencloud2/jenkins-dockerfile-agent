@@ -1,0 +1,39 @@
+pipeline {
+  agent none
+
+  stages {
+    stage('Sync Android App Project') {
+      agent any
+      steps {
+        sh 'rm -rf android-app && mkdir -p android-app'
+        sh 'cp -r --no-preserve=mode,ownership,timestamps /workspace/android-app/. android-app/'
+      }
+    }
+
+    stage('Build Android App and Archive APK') {
+      agent {
+        dockerfile {
+          dir 'android-app'
+          args '-u root:root'
+        }
+      }
+
+      stages {
+        stage('Build APK') {
+          steps {
+            dir('android-app') {
+              sh 'chmod +x gradlew'
+              sh './gradlew clean assembleDebug'
+            }
+          }
+        }
+
+        stage('Archive APK') {
+          steps {
+            archiveArtifacts artifacts: 'android-app/app/build/outputs/apk/debug/*.apk', followSymlinks: false
+          }
+        }
+      }
+    }
+  }
+}

@@ -17,45 +17,11 @@ unclassified:
 jobs:
   - script: >
       pipelineJob('dockerfile-agent-test') {
-        description('Android build pipeline using android-app/Dockerfile with Gradle build and APK archiving.')
+        description('Android build pipeline using android-app/Jenkinsfile with Gradle build and APK archiving.')
         definition {
           cps {
-            script("""
-            pipeline {
-              agent none
-              stages {
-                stage('Sync Sources') {
-                  agent any
-                  steps {
-                    sh 'rm -rf android-app && mkdir -p android-app'
-                    sh 'cp -a /workspace/android-app/. android-app/'
-                  }
-                }
-                stage('Build') {
-                  agent {
-                    dockerfile {
-                      dir 'android-app'
-                      args '-u root:root'
-                    }
-                  }
-                  steps {
-                    dir('android-app') {
-                      sh 'chmod +x gradlew'
-                      sh './gradlew clean assembleDebug'
-                    }
-                  }
-                }
-                stage('Archive APK') {
-                  agent any
-                  steps {
-                    archiveArtifacts artifacts: 'android-app/app/build/outputs/apk/debug/*.apk', followSymlinks: false
-                  }
-                }
-              }
-            }
-            """)
+            script(new File('/workspace/android-app/Jenkinsfile').text)
             sandbox()
           }
         }
       }
-
