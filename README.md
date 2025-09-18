@@ -46,6 +46,20 @@ This repository provides a minimal, repeatable setup to build an Android app ins
 -----
 
 ## Quick start
+
+Start the host ADB server.
+
+- Host ADB Server: The ADB server runs on the host machine where it has direct access to USB devices
+- Container ADB Client: The container connects to the host's ADB server via network
+
+```bash
+# Kill any existing ADB server
+adb kill-server
+
+# Start ADB server with network listening enabled
+adb -a -P 5037 server nodaemon &
+```
+
 ```bash
 docker compose up -d --build
 ```

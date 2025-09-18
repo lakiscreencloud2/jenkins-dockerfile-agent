@@ -12,9 +12,9 @@ ENV ANDROID_SDK_TOOLS_REV="13114758"
 ENV ANDROID_BUILD_TOOLS_VERSION="36.0.0"
 ENV ANDROID_SDK_VERSION="36"
 
-# Install system packages and create the Android SDK directory
+# Install dependencies and create the Android SDK directory
 RUN apt-get update && \
-    apt-get -y install wget unzip socat xsltproc python3 zip sshpass && \
+    apt-get -y install wget unzip && \
     mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools
 
 # Download and set up the Android command-line tools in the correct location
@@ -25,7 +25,19 @@ RUN wget --quiet --output-document=${ANDROID_SDK_ROOT}/android-sdk.zip https://d
     mkdir -p /root/.android && \
     touch /root/.android/repositories.cfg
 
+# Download Android platform-tools directly to the correct location
+RUN wget --quiet --output-document=/tmp/platform-tools.zip "https://dl.google.com/android/repository/platform-tools-latest-linux.zip" && \
+    unzip -q /tmp/platform-tools.zip -d ${ANDROID_SDK_ROOT} && \
+    # --- Cleanup ---
+    rm /tmp/platform-tools.zip && \
+    apt-get purge -y wget unzip && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
 # Use sdkmanager to accept licenses and update
 RUN yes | sdkmanager --licenses > /dev/null && \
     yes | sdkmanager --update > /dev/null && \
-    yes | sdkmanager "platform-tools" "build-tools;${ANDROID_BUILD_TOOLS_VERSION}" "platforms;android-${ANDROID_SDK_VERSION}"
+    yes | sdkmanager "build-tools;${ANDROID_BUILD_TOOLS_VERSION}" "platforms;android-${ANDROID_SDK_VERSION}"
+
+# Connecting to the host machine's ADB server
+ENV ADB_SERVER_SOCKET=tcp:host.docker.internal:5037

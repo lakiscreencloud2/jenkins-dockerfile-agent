@@ -28,6 +28,27 @@ pipeline {
           }
         }
 
+        stage('Run Android Tests') {
+          // This 'when' block adds the conditional logic ⚙️
+          when {
+            expression {
+              // This script checks for connected devices.
+              // 'returnStatus: true' ensures the build doesn't fail if no devices are found;
+              // it just returns the command's exit code.
+              def adbCheck = sh(script: 'adb devices | grep -w "device"', returnStatus: true)
+              
+              // The 'grep' command returns 0 if it finds a match (a device).
+              // The stage will only run if this expression is true.
+              return adbCheck == 0
+            }
+          }
+          steps {
+            dir('android-app') {
+              sh './gradlew connectedDebugAndroidTest'
+            }
+          }
+        }
+
         stage('Archive APK') {
           steps {
             archiveArtifacts artifacts: 'android-app/app/build/outputs/apk/debug/*.apk', followSymlinks: false
