@@ -1,7 +1,7 @@
 services:
   jenkins:
     build:
-      context: .
+      context: ./jenkins
     ports:
       - 8080:8080
     environment:
@@ -11,10 +11,12 @@ services:
       - CASC_JENKINS_CONFIG=/var/jenkins_config/jenkins.yaml
       - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
     volumes:
-      - ./jenkins.yaml:/var/jenkins_config/jenkins.yaml:ro
+      - ./jenkins/jenkins.yaml:/var/jenkins_config/jenkins.yaml:ro
       - jenkins_home:/var/jenkins_home
       - jenkins-docker-certs:/certs/client:ro
       - ./android-app:/workspace/android-app:ro
+    networks:
+      - jenkins
 
   docker:
     image: docker:dind
@@ -26,7 +28,21 @@ services:
     volumes:
       - jenkins-docker-certs:/certs/client
       - jenkins_home:/var/jenkins_home
+    networks:
+      - jenkins
+
+  adb-server:
+    build:
+      context: ./adb-server
+    environment:
+      - ADB_SERVER_SOCKET=tcp:host.docker.internal:5037
+    networks:
+      - jenkins
 
 volumes:
   jenkins_home:
   jenkins-docker-certs:
+
+networks:
+  jenkins:
+    driver: bridge
