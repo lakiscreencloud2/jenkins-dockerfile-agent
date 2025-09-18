@@ -40,4 +40,5 @@ RUN yes | sdkmanager --licenses > /dev/null && \
     yes | sdkmanager "build-tools;${ANDROID_BUILD_TOOLS_VERSION}" "platforms;android-${ANDROID_SDK_VERSION}"
 
 # Connecting to the host machine's ADB server
+# ENV ADB_SERVER_SOCKET=tcp:host.docker.internal:5037
 ENV ADB_SERVER_SOCKET=tcp:adb-server:5037
