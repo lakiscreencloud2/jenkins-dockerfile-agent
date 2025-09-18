@@ -14,7 +14,7 @@ pipeline {
       agent {
         dockerfile {
           dir 'android-app'
-          args '-u root:root'
+          args '-u root:root --network host'
         }
       }
 
@@ -44,7 +44,21 @@ pipeline {
           }
           steps {
             dir('android-app') {
-              sh './gradlew connectedDebugAndroidTest'
+              script {
+                // Ensure ADB server is responsive and device is ready
+                sh '''
+                  echo "Preparing ADB connection for tests..."
+                  adb devices -l
+                  adb shell echo "Device connection test successful"
+                  
+                  echo "Starting Android tests with timeout..."
+                '''
+                
+                // Run tests with timeout to prevent hanging
+                timeout(time: 2, unit: 'MINUTES') {
+                  sh './gradlew connectedDebugAndroidTest --info --stacktrace'
+                }
+              }
             }
           }
         }

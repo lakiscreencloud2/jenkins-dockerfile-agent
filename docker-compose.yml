@@ -31,14 +31,6 @@ services:
     networks:
       - jenkins
 
-  adb-server:
-    build:
-      context: ./adb-server
-    environment:
-      - ADB_SERVER_SOCKET=tcp:host.docker.internal:5037
-    networks:
-      - jenkins
-
 volumes:
   jenkins_home:
   jenkins-docker-certs:
