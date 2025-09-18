@@ -14,7 +14,7 @@ pipeline {
       agent {
         dockerfile {
           dir 'android-app'
-          args '-u root:root --network host'
+          args '-u root:root'
         }
       }
 
