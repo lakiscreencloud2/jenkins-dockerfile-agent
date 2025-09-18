@@ -5,7 +5,17 @@ pipeline {
     stage('Sync Android App Project') {
       agent any
       steps {
-        sh 'rm -rf android-app && mkdir -p android-app'
+        script {
+          // Handle potential permission issues from previous builds
+          sh '''
+            if [ -d "android-app" ]; then
+              # Try to make files writable first, then remove
+              chmod -R u+w android-app 2>/dev/null || true
+              rm -rf android-app
+            fi
+            mkdir -p android-app
+          '''
+        }
         sh 'cp -r --no-preserve=mode,ownership,timestamps /workspace/android-app/. android-app/'
       }
     }
@@ -66,6 +76,22 @@ pipeline {
         stage('Archive APK') {
           steps {
             archiveArtifacts artifacts: 'android-app/app/build/outputs/apk/debug/*.apk', followSymlinks: false
+          }
+        }
+      }
+
+      post {
+        always {
+          // Ensure cleanup happens even if build fails
+          script {
+            try {
+              dir('android-app') {
+                sh 'chown -R 1000:1000 . || true'
+                sh 'chmod -R u+w . || true'
+              }
+            } catch (Exception e) {
+              echo "Cleanup failed: ${e.getMessage()}"
+            }
           }
         }
       }
