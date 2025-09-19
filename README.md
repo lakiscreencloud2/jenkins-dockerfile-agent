@@ -1,188 +1,129 @@
-## Android App Build with Jenkins Dockerfile Agent
+## Android App Build & Test with Jenkins Dockerfile Agent
 
-Also with DinD + JCasC
+This repository provides a minimal, repeatable setup to build and test an Android app inside Jenkins using a Dockerfile-based agent. It leverages Docker-in-Docker (DinD) and Jenkins Configuration as Code (JCasC) and includes the ability to run connected Android tests against an ADB server running on the host machine.
 
-This repository provides a minimal, repeatable setup to build an Android app inside Jenkins with Dockerfile-based Jenkins agent, also using Docker-in-Docker (dind) and Jenkins Configuration as Code (JCasC).
+### What you get ✨
+- **One-command bring-up** of a Jenkins controller and a secure Docker daemon (DinD).
+- **JCasC-managed Jenkins** with all system configuration defined in `jenkins/jenkins.yaml`.
+- **Dockerfile-based agents** where the Android build environment is defined right next to the app source code.
+- **A complete pipeline** that builds the app, archives the APK, and conditionally runs instrumentation tests.
+- **Host ADB integration** allowing the Jenkins agent container to connect to a physical device or emulator for running tests.
+- **Clear separation of concerns**: Jenkins system config in `jenkins/`; Android build logic in `android-app/`.
 
-### What you get
-- **One-command bring-up** of a Jenkins controller and a secure Docker daemon (dind)
-- **JCasC-managed Jenkins** jenkins system config in `jenkins.yaml`
-- **Jenkins Dockerfile agent build steps** defined in the Android project (`android-app/Jenkins`)
-- **Gradle build** (`./gradlew clean assembleDebug`) and **APK archiving**
-- Clear separation of concerns: Jenkins system config in `jenkins.yaml`; Android build logic and environment in `android-app/`
+---
 
------
-
-## Repository layout
+## Repository Layout
 
 ```text
 .
-├── docker-compose.yml          # Orchestrates Jenkins and dind
-├── Dockerfile                  # Jenkins controller image (plugins + docker cli)
-├── jenkins.yaml                # JCasC: Jenkins system + pipeline loading
+├── docker-compose.yml          # Orchestrates Jenkins and DinD services
+├── start-host-adb-server.sh    # Downloads tools and starts the host ADB server
+├── jenkins/
+│   ├── Dockerfile              # Jenkins controller image (plugins + Docker CLI)
+│   └── jenkins.yaml            # JCasC: Jenkins system + pipeline job definition
 └── android-app/
-    ├── Dockerfile             # Android SDK/tools image for builds
-    ├── Jenkinsfile            # Android app build Pipeline: sync, build, archive
-    ├── gradlew                # Gradle Wrapper (used by the Pipeline)
-    └── app/...                # Android app sources and Gradle config
-```
+    ├── Dockerfile              # Android SDK/tools image for build agents
+    ├── Jenkinsfile             # The build, test, and archive pipeline script
+    ├── gradlew                 # Gradle Wrapper (used by the pipeline)
+    └── app/                    # Android app sources and Gradle config
+````
 
 -----
 
-## How it works (high level)
-- `docker-compose.yml` starts two containers:
-  - `jenkins`: Jenkins controller (built from the root `Dockerfile`)
-  - `docker`: Docker-in-Docker daemon serving TLS on 2376
-- The controller connects to dind via `DOCKER_HOST=tcp://docker:2376` and mounts TLS certs.
-- JCasC (`jenkins.yaml`) creates a Pipeline job that reads the Pipeline script from the mounted path `/workspace/android-app/Jenkinsfile`.
-- The Pipeline’s build stage uses a `dockerfile` agent rooted at `android-app/` so Jenkins builds the Android image and runs Gradle inside it.
+## How it Works ⚙️
+
+1.  **`docker-compose.yml`** starts two containers: `jenkins` (the controller) and `docker` (a DinD daemon). They communicate over a shared Docker network.
+2.  The `jenkins` controller is configured via environment variables to connect to the `docker` daemon using TLS, enabling it to build and run other Docker containers.
+3.  On startup, Jenkins uses the **JCasC plugin** to automatically apply the configuration from `jenkins/jenkins.yaml`. This creates a pipeline job named `dockerfile-agent-test`.
+4.  The pipeline job reads its definition from `android-app/Jenkinsfile`, which is mounted into the controller.
+5.  When the pipeline runs, the 'Build' stage uses a `dockerfile` agent. Jenkins builds a temporary agent image from `android-app/Dockerfile` and runs the build steps inside a container based on that image.
+6.  The agent container connects to the host's network (`--network host`) to find the **ADB server**, allowing it to run `connectedDebugAndroidTest` on any connected device or emulator.
 
 -----
 
 ## Prerequisites
-- Docker Engine and Docker Compose
-- Ports free on the host: `8080` (Jenkins), `2376` (dind)
+
+  - Docker Engine and Docker Compose
+  - `wget` and `unzip` installed on the host machine.
+  - Ports `8080` (Jenkins) and `2376` (DinD) must be free on the host.
 
 -----
 
-## Quick start
+## Quick Start
 
-Start the host ADB server.
+### 1\. Prepare and Start the Host ADB Server
 
-- Host ADB Server: The ADB server runs on the host machine where it has direct access to USB devices
-- Container ADB Client: The container connects to the host's ADB server via network
+This project includes a script to download the correct Android platform tools and start the ADB server configured to accept network connections.
+
+First, make the script executable:
 
 ```bash
-# Kill any existing ADB server
-adb kill-server
-
-# Start ADB server with network listening enabled
-adb -a -P 5037 server nodaemon &
+chmod +x start-host-adb-server.sh
 ```
+
+Now, run the script:
+
+```bash
+./start-host-adb-server.sh
+```
+
+The script will download platform-tools into a local `android-platform-tools` directory (if not already present) and then start the ADB server.
+
+### 2\. Launch Jenkins
 
 ```bash
 docker compose up -d --build
 ```
-Open Jenkins at `http://localhost:8080`.
 
-Default local user (defined by JCasC):
-- Username: `admin`
-- Password: `admin`
+Open Jenkins in your browser at `http://localhost:8080`.
 
-Generate an API token for `admin` in the UI (recommended), or use curl with a token to trigger the job (see below).
+Log in with the default credentials (defined in `jenkins.yaml`):
 
------
+  - **Username**: `admin`
+  - **Password**: `admin`
 
-## Triggering a build via API
-
-1) Get a CSRF crumb (when using basic auth with a token):
-```bash
-TOKEN=YOUR_ADMIN_API_TOKEN
-curl -sf --user admin:$TOKEN http://localhost:8080/crumbIssuer/api/json
-```
-
-2) Trigger the job:
-```bash
-CRUMB_JSON=$(curl -sf --user admin:$TOKEN http://localhost:8080/crumbIssuer/api/json)
-CRUMB=$(echo "$CRUMB_JSON" | jq -r .crumb)
-FIELD=$(echo "$CRUMB_JSON" | jq -r .crumbRequestField)
-curl -X POST -s -o /dev/null -w "%{http_code}\n" \
-  http://localhost:8080/job/dockerfile-agent-test/build \
-  --user admin:$TOKEN -H "$FIELD: $CRUMB"
-```
-
-3) Fetch console output:
-```bash
-curl --user admin:$TOKEN \
-  http://localhost:8080/job/dockerfile-agent-test/lastBuild/consoleText
-```
-
-Note: If you do a clean restart (remove `jenkins_home`), previously created tokens are invalid. Create a new token after each clean restart.
+Run the `dockerfile-agent-test` job. If a device is connected and recognized by `adb devices`, the test stage will run. Otherwise, it will be skipped automatically.
 
 -----
 
-## Clean restart
-```bash
-docker compose down -v
-docker compose up -d --build
-```
-
-This removes the persisted `jenkins_home` volume and re-applies JCasC on boot.
-
------
-
-## Key configuration (with snippets)
+## Key Configuration Snippets
 
 ### docker-compose.yml
+
+Orchestrates the Jenkins controller and the Docker-in-Docker daemon. Note the volume mounts that provide the configuration files and allow the services to communicate.
+
 ```yaml
 services:
   jenkins:
     build:
-      context: .
+      context: ./jenkins
     ports:
       - 8080:8080
     environment:
       - DOCKER_HOST=tcp://docker:2376
-      - DOCKER_CERT_PATH=/certs/client
-      - DOCKER_TLS_VERIFY=1
-      - CASC_JENKINS_CONFIG=/var/jenkins_config/jenkins.yaml
-      - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
+      # ... other env vars
     volumes:
-      - ./jenkins.yaml:/var/jenkins_config/jenkins.yaml:ro
+      - ./jenkins/jenkins.yaml:/var/jenkins_config/jenkins.yaml:ro
       - jenkins_home:/var/jenkins_home
       - jenkins-docker-certs:/certs/client:ro
       - ./android-app:/workspace/android-app:ro
+    networks:
+      - jenkins
 
   docker:
     image: docker:dind
     ports:
       - 2376:2376
-    privileged: true
-    environment:
-      - DOCKER_TLS_CERTDIR=/certs
-    volumes:
-      - jenkins-docker-certs:/certs/client
-      - jenkins_home:/var/jenkins_home
-
-volumes:
-  jenkins_home:
-  jenkins-docker-certs:
+    # ... other config
+    networks:
+      - jenkins
 ```
 
-### Jenkins controller image (Dockerfile)
-Installs required plugins (JCasC, Pipeline, Docker workflow, Job DSL) and Docker CLI for controller-side orchestration.
-```dockerfile
-FROM jenkins/jenkins:lts-jdk21
-USER root
-RUN apt-get update && apt-get install -y lsb-release \
- && curl -fsSLo /usr/share/keyrings/docker-archive-keyring.asc https://download.docker.com/linux/debian/gpg \
- && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.asc] https://download.docker.com/linux/debian $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list \
- && apt-get update && apt-get install -y docker-ce-cli
-RUN jenkins-plugin-cli --plugins \
-  configuration-as-code credentials plain-credentials workflow-aggregator \
-  docker-workflow git pipeline-model-definition github-branch-source job-dsl
-USER jenkins
-```
+### JCasC (jenkins/jenkins.yaml)
 
-### JCasC (jenkins.yaml)
-Defines the admin user and the Pipeline job that loads its script from the mounted `android-app/Jenkinsfile`.
+Configures the Jenkins instance and creates our pipeline job. The job is defined to load its script directly from the mounted `Jenkinsfile`.
+
 ```yaml
-jenkins:
-  systemMessage: "Jenkins configured automatically by JCasC."
-  securityRealm:
-    local:
-      allowsSignup: false
-      users:
-        - id: "admin"
-          password: "admin"
-  authorizationStrategy:
-    loggedInUsersCanDoAnything:
-      allowAnonymousRead: false
-
-unclassified:
-  location:
-    url: "http://localhost:8080/"
-
 jobs:
   - script: >
       pipelineJob('dockerfile-agent-test') {
@@ -196,63 +137,71 @@ jobs:
       }
 ```
 
-### Android build image (android-app/Dockerfile)
-Sets up Android commandline tools and installs specific SDK components. Adjust versions via `ANDROID_BUILD_TOOLS_VERSION` and `ANDROID_SDK_VERSION` if needed.
+### Android Agent (android-app/Dockerfile)
+
+Defines the entire build environment for our Android app, including the Java version, Android SDK, and build tools. The `ADB_SERVER_SOCKET` variable tells the ADB client inside the container where to find the host's ADB server.
+
 ```dockerfile
 FROM openjdk:17-slim-bullseye
+
 ENV ANDROID_SDK_ROOT="/opt/android-sdk"
 ENV PATH="${PATH}:${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools"
-ENV ANDROID_SDK_TOOLS_REV="13114758"
-ENV ANDROID_BUILD_TOOLS_VERSION="36.0.0"
-ENV ANDROID_SDK_VERSION="36"
-RUN apt-get update && apt-get -y install wget unzip socat xsltproc python3 zip sshpass \
- && mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools
-RUN wget --quiet -O ${ANDROID_SDK_ROOT}/android-sdk.zip \
-    https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_SDK_TOOLS_REV}_latest.zip \
- && unzip -qq ${ANDROID_SDK_ROOT}/android-sdk.zip -d ${ANDROID_SDK_ROOT}/cmdline-tools \
- && mv ${ANDROID_SDK_ROOT}/cmdline-tools/cmdline-tools ${ANDROID_SDK_ROOT}/cmdline-tools/latest \
- && rm ${ANDROID_SDK_ROOT}/android-sdk.zip \
- && mkdir -p /root/.android \
- && touch /root/.android/repositories.cfg
-RUN yes | sdkmanager --licenses > /dev/null \
- && yes | sdkmanager --update > /dev/null \
- && yes | sdkmanager "platform-tools" "build-tools;${ANDROID_BUILD_TOOLS_VERSION}" "platforms;android-${ANDROID_SDK_VERSION}"
+# ... other SDK versions
+RUN apt-get update && \
+    apt-get -y install wget unzip && \
+    # ... SDK setup commands
+
+# Use sdkmanager to accept licenses and install components
+RUN yes | sdkmanager --licenses > /dev/null && \
+    yes | sdkmanager --update > /dev/null && \
+    yes | sdkmanager "build-tools;${ANDROID_BUILD_TOOLS_VERSION}" "platforms;android-${ANDROID_SDK_VERSION}"
+
+# Tells the ADB client in this container how to connect to the host's ADB server
+ENV ADB_SERVER_SOCKET=tcp:host.docker.internal:5037
 ```
 
 ### Pipeline (android-app/Jenkinsfile)
-Syncs sources into the workspace, builds inside a Dockerfile agent (running as root for tool installation and permissions), and archives the debug APK.
+
+This declarative pipeline defines the CI/CD flow. The key features are:
+
+  - **`agent { dockerfile { ... } }`**: Tells Jenkins to build and use an agent from the specified `Dockerfile`.
+  - **`args '-u root:root --network host'`**: Runs the agent container as `root` to avoid permission issues and connects it to the host's network, which is essential for the ADB connection.
+  - **`when { expression { ... } }`**: A condition that checks for connected devices before deciding whether to run the 'Run Android Tests' stage.
+
 ```groovy
 pipeline {
   agent none
+
   stages {
-    stage('Sync Android App Project') {
-      agent any
-      steps {
-        sh 'rm -rf android-app && mkdir -p android-app'
-        sh 'cp -r --no-preserve=mode,ownership,timestamps /workspace/android-app/. android-app/'
-      }
-    }
+    stage('Sync Android App Project') { /* ... */ }
+
     stage('Build Android App and Archive APK') {
       agent {
         dockerfile {
           dir 'android-app'
-          args '-u root:root'
+          args '-u root:root --network host'
         }
       }
+
       stages {
-        stage('Build APK') {
+        stage('Build APK') { /* ... */ }
+
+        stage('Run Android Tests') {
+          when {
+            expression {
+              // Only run this stage if 'adb devices' finds at least one device
+              def adbCheck = sh(script: 'adb devices | grep -w "device"', returnStatus: true)
+              return adbCheck == 0
+            }
+          }
           steps {
             dir('android-app') {
-              sh 'chmod +x gradlew'
-              sh './gradlew clean assembleDebug'
+              sh './gradlew connectedDebugAndroidTest --info --stacktrace'
             }
           }
         }
-        stage('Archive APK') {
-          steps {
-            archiveArtifacts artifacts: 'android-app/app/build/outputs/apk/debug/*.apk', followSymlinks: false
-          }
-        }
+
+        stage('Archive APK') { /* ... */ }
       }
     }
   }
@@ -261,27 +210,8 @@ pipeline {
 
 -----
 
-## Tips and troubleshooting
-- **API tokens after clean restart**: removing `jenkins_home` invalidates tokens; create a new token in the UI.
-- **Docker TLS errors**: ensure the controller uses `DOCKER_HOST=tcp://docker:2376` and mounts `jenkins-docker-certs` as in `docker-compose.yml`.
-- **Gradle/SDK issues**: update `ANDROID_BUILD_TOOLS_VERSION` and `ANDROID_SDK_VERSION` in `android-app/Dockerfile` to match your project.
-- **File permissions**: the Pipeline copies sources with `--no-preserve` and runs the build container as root (`-u root:root`) to avoid permission conflicts when writing build outputs and SDK caches.
+## Tips and Troubleshooting
 
------
-
-## Useful commands
-```bash
-# Start / rebuild
-docker compose up -d --build
-
-# Restart only Jenkins
-docker compose restart jenkins
-
-# View logs
-docker logs -f jenkins-dockerfile-agent-jenkins-1 | sed -u '200q'
-
-# Clean restart (removes data)
-docker compose down -v && docker compose up -d --build
-```
-
-This setup gives you a clean, reproducible Android build pipeline with a jenkins Dockerfile agent and all configurations managed by code.
+  - **No Device Found**: If the 'Run Android Tests' stage is always skipped, ensure your host ADB server is running (`./android-platform-tools/platform-tools/adb devices` on your host machine shows a device) and that the container can reach it. The `--network host` setting is critical.
+  - **`host.docker.internal`**: This hostname is automatically resolved by Docker.
+  - **Clean Restart**: To reset your Jenkins instance completely, run `docker compose down -v`. This removes the `jenkins_home` volume, deleting all job history and credentials. Jenkins will be reconfigured from `jenkins.yaml` on the next startup.
