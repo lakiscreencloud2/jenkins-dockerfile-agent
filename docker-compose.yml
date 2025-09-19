@@ -28,6 +28,8 @@ services:
     volumes:
       - jenkins-docker-certs:/certs/client
       - jenkins_home:/var/jenkins_home
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - jenkins
 
