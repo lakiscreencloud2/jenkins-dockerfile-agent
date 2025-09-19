@@ -7,7 +7,7 @@ This repository provides a minimal, repeatable setup to build and test an Androi
 - **JCasC-managed Jenkins** with all system configuration defined in `jenkins/jenkins.yaml`.
 - **Dockerfile-based agents** where the Android build environment is defined right next to the app source code.
 - **A complete pipeline** that builds the app, archives the APK, and conditionally runs instrumentation tests.
-- **Host ADB integration** allowing the Jenkins agent container to connect to a physical device or emulator for running tests.
+- **Host ADB integration** using `socat` to proxy commands from the agent container to a physical device or emulator for running tests.
 - **Clear separation of concerns**: Jenkins system config in `jenkins/`; Android build logic in `android-app/`.
 
 ---
@@ -17,7 +17,6 @@ This repository provides a minimal, repeatable setup to build and test an Androi
 ```text
 .
 ├── docker-compose.yml          # Orchestrates Jenkins and DinD services
-├── start-host-adb-server.sh    # Downloads tools and starts the host ADB server
 ├── jenkins/
 │   ├── Dockerfile              # Jenkins controller image (plugins + Docker CLI)
 │   └── jenkins.yaml            # JCasC: Jenkins system + pipeline job definition
@@ -36,22 +35,23 @@ This repository provides a minimal, repeatable setup to build and test an Androi
 2.  The `jenkins` controller is configured via environment variables to connect to the `docker` daemon using TLS, enabling it to build and run other Docker containers.
 3.  On startup, Jenkins uses the **JCasC plugin** to automatically apply the configuration from `jenkins/jenkins.yaml`. This creates a pipeline job named `dockerfile-agent-test`.
 4.  The pipeline job reads its definition from `android-app/Jenkinsfile`, which is mounted into the controller.
-5.  When the pipeline runs, the 'Build' stage uses a `dockerfile` agent. Jenkins builds a temporary agent image from `android-app/Dockerfile` and runs the build steps inside a container based on that image.
-6.  The agent container connects to the host's network (`--network host`) to find the **ADB server**, allowing it to run `connectedDebugAndroidTest` on any connected device or emulator.
+5.  When the pipeline runs, the 'Build, Test & Archive' stage uses a `dockerfile` agent. Jenkins builds a temporary agent image from `android-app/Dockerfile` and runs the build steps inside a container based on that image.
+6.  Inside the agent container, a `socat` process is started to forward ADB requests from the container's port `5037` to the host machine's ADB server via `host.docker.internal:5037`, allowing Gradle to run `connectedDebugAndroidTest` on any connected device or emulator.
 
 -----
 
 ## Prerequisites
 
   - Docker Engine and Docker Compose
-  - `wget` and `unzip` installed on the host machine.
+  - An ADB server running on your host machine and listening on all network interfaces.
+  - An Android device or emulator connected and authorized with the host ADB server.
   - Ports `8080` (Jenkins) and `2376` (DinD) must be free on the host.
 
 -----
 
 ## Quick Start
 
-### 1\. Prepare and Start the Host ADB Server
+### 1. Prepare and Start the Host ADB Server
 
 This project includes a script to download the correct Android platform tools and start the ADB server configured to accept network connections.
 
@@ -69,7 +69,7 @@ Now, run the script:
 
 The script will download platform-tools into a local `android-platform-tools` directory (if not already present) and then start the ADB server.
 
-### 2\. Launch Jenkins
+### 2. Launch Jenkins
 
 ```bash
 docker compose up -d --build
@@ -139,7 +139,7 @@ jobs:
 
 ### Android Agent (android-app/Dockerfile)
 
-Defines the entire build environment for our Android app, including the Java version, Android SDK, and build tools. The `ADB_SERVER_SOCKET` variable tells the ADB client inside the container where to find the host's ADB server.
+Defines the entire build environment for our Android app, including the Java version, Android SDK, and build tools.
 
 ```dockerfile
 FROM openjdk:17-slim-bullseye
@@ -148,16 +148,13 @@ ENV ANDROID_SDK_ROOT="/opt/android-sdk"
 ENV PATH="${PATH}:${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools"
 # ... other SDK versions
 RUN apt-get update && \
-    apt-get -y install wget unzip && \
+    apt-get -y install wget unzip socat && \
     # ... SDK setup commands
 
 # Use sdkmanager to accept licenses and install components
 RUN yes | sdkmanager --licenses > /dev/null && \
     yes | sdkmanager --update > /dev/null && \
     yes | sdkmanager "build-tools;${ANDROID_BUILD_TOOLS_VERSION}" "platforms;android-${ANDROID_SDK_VERSION}"
-
-# Tells the ADB client in this container how to connect to the host's ADB server
-ENV ADB_SERVER_SOCKET=tcp:host.docker.internal:5037
 ```
 
 ### Pipeline (android-app/Jenkinsfile)
@@ -165,46 +162,66 @@ ENV ADB_SERVER_SOCKET=tcp:host.docker.internal:5037
 This declarative pipeline defines the CI/CD flow. The key features are:
 
   - **`agent { dockerfile { ... } }`**: Tells Jenkins to build and use an agent from the specified `Dockerfile`.
-  - **`args '-u root:root --network host'`**: Runs the agent container as `root` to avoid permission issues and connects it to the host's network, which is essential for the ADB connection.
-  - **`when { expression { ... } }`**: A condition that checks for connected devices before deciding whether to run the 'Run Android Tests' stage.
+  - **`args '-u root:root --network host'`**: Runs the agent container as `root` to avoid permission issues and connects it to the host's network, which is essential for `socat` to reach `host.docker.internal`.
+  - **`socat` proxy**: A dedicated stage starts a proxy to forward ADB requests to the host.
+  - **Conditional Test Stage**: The `when` block checks for connected devices before running tests.
+  - **`post { always { ... } }`**: A robust cleanup block ensures the `socat` process is killed and workspace permissions are fixed after every run.
 
 ```groovy
 pipeline {
-  agent none
-
-  stages {
-    stage('Sync Android App Project') { /* ... */ }
-
-    stage('Build Android App and Archive APK') {
-      agent {
-        dockerfile {
-          dir 'android-app'
-          args '-u root:root --network host'
-        }
-      }
-
-      stages {
-        stage('Build APK') { /* ... */ }
-
-        stage('Run Android Tests') {
-          when {
-            expression {
-              // Only run this stage if 'adb devices' finds at least one device
-              def adbCheck = sh(script: 'adb devices | grep -w "device"', returnStatus: true)
-              return adbCheck == 0
-            }
-          }
-          steps {
-            dir('android-app') {
-              sh './gradlew connectedDebugAndroidTest --info --stacktrace'
-            }
-          }
-        }
-
-        stage('Archive APK') { /* ... */ }
-      }
+    agent none
+    environment {
+        APP_DIR = 'android-app'
     }
-  }
+    stages {
+        stage('Preparation') { /* ... clean workspace and copy files ... */ }
+
+        stage('Build, Test & Archive') {
+            agent {
+                dockerfile {
+                    dir env.APP_DIR
+                    args '-u root:root --network host'
+                }
+            }
+            stages {
+                stage('Build APK') {
+                    steps {
+                        dir(env.APP_DIR) {
+                            sh 'chmod +x gradlew && ./gradlew clean assembleDebug'
+                        }
+                    }
+                }
+                stage('Setup ADB Proxy') {
+                    steps {
+                        sh 'socat TCP-LISTEN:5037,fork TCP:host.docker.internal:5037 & echo $! > socat.pid'
+                    }
+                }
+                stage('Run Instrumented Tests') {
+                    when {
+                        expression {
+                            def adbCheck = sh(script: 'adb devices | grep -w "device"', returnStatus: true)
+                            return adbCheck == 0
+                        }
+                    }
+                    steps {
+                        dir(env.APP_DIR) {
+                            sh './gradlew connectedDebugAndroidTest --info --stacktrace'
+                        }
+                    }
+                }
+                stage('Archive Artifacts') { /* ... archive the APK ... */ }
+            }
+            post {
+                always {
+                    script {
+                        echo 'Performing post-build cleanup...'
+                        sh "if [ -f socat.pid ]; then kill \$(cat socat.pid); rm socat.pid; fi"
+                        // ... permission fixes
+                    }
+                }
+            }
+        }
+    }
 }
 ```
 
@@ -212,6 +229,6 @@ pipeline {
 
 ## Tips and Troubleshooting
 
-  - **No Device Found**: If the 'Run Android Tests' stage is always skipped, ensure your host ADB server is running (`./android-platform-tools/platform-tools/adb devices` on your host machine shows a device) and that the container can reach it. The `--network host` setting is critical.
-  - **`host.docker.internal`**: This hostname is automatically resolved by Docker.
+  - **No Device Found**: If the 'Run Instrumented Tests' stage is always skipped, ensure your host ADB server was started with `adb -a server nodaemon` and that your host machine's firewall is not blocking connections to port `5037`. Running `adb devices` on your host should show your device.
+  - **`host.docker.internal`**: This is a special DNS name provided by Docker that resolves to the internal IP address of the host, making the host's ADB server reachable from within a container.
   - **Clean Restart**: To reset your Jenkins instance completely, run `docker compose down -v`. This removes the `jenkins_home` volume, deleting all job history and credentials. Jenkins will be reconfigured from `jenkins.yaml` on the next startup.
