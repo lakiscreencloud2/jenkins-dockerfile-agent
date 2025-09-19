@@ -14,7 +14,7 @@ ENV ANDROID_SDK_VERSION="36"
 
 # Install dependencies and create the Android SDK directory
 RUN apt-get update && \
-    apt-get -y install wget unzip && \
+    apt-get -y install wget unzip socat && \
     mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools
 
 # Download and set up the Android command-line tools in the correct location
@@ -38,6 +38,3 @@ RUN wget --quiet --output-document=/tmp/platform-tools.zip "https://dl.google.co
 RUN yes | sdkmanager --licenses > /dev/null && \
     yes | sdkmanager --update > /dev/null && \
     yes | sdkmanager "build-tools;${ANDROID_BUILD_TOOLS_VERSION}" "platforms;android-${ANDROID_SDK_VERSION}"
-
-# Connecting to the host machine's ADB server
-ENV ADB_SERVER_SOCKET=tcp:host.docker.internal:5037

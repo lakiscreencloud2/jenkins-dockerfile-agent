@@ -1,29 +1,35 @@
 pipeline {
+  // Use 'agent none' at the top level because stages use different environments.
   agent none
 
+  // Define environment variables here to make the pipeline easier to maintain.
+  environment {
+    APP_DIR = 'android-app'
+  }
+
   stages {
-    stage('Sync Android App Project') {
+    // This stage prepares the workspace for the build.
+    stage('Preparation') {
       agent any
       steps {
-        script {
-          // Handle potential permission issues from previous builds
-          sh '''
-            if [ -d "android-app" ]; then
-              # Try to make files writable first, then remove
-              chmod -R u+w android-app 2>/dev/null || true
-              rm -rf android-app
-            fi
-            mkdir -p android-app
-          '''
-        }
-        sh 'cp -r --no-preserve=mode,ownership,timestamps /workspace/android-app/. android-app/'
+        // Use the built-in deleteDir() step to ensure a clean workspace.
+        // This replaces cleanWs() which requires a plugin that isn't installed.
+        deleteDir()
+
+        // In a real scenario, you'd check out code from source control here.
+        // ex: git url: 'https://your.repo.git', branch: 'main'
+        // We'll replicate the original copy behavior for this example.
+        sh "mkdir -p ${env.APP_DIR}"
+        sh "cp -r --no-preserve=mode,ownership,timestamps /workspace/android-app/. ${env.APP_DIR}/"
       }
     }
 
-    stage('Build Android App and Archive APK') {
+    // This stage handles all build, test, and archiving logic inside a consistent Docker environment.
+    stage('Build, Test & Archive') {
       agent {
         dockerfile {
-          dir 'android-app'
+          dir env.APP_DIR
+          // Args allow running Docker as root (for permissions) and connecting to the host network (for ADB).
           args '-u root:root --network host'
         }
       }
@@ -31,70 +37,71 @@ pipeline {
       stages {
         stage('Build APK') {
           steps {
-            dir('android-app') {
-              sh 'chmod +x gradlew'
-              sh './gradlew clean assembleDebug'
+            dir(env.APP_DIR) {
+              // Combine commands into a single shell step for efficiency.
+              sh '''
+                chmod +x gradlew
+                ./gradlew clean assembleDebug
+              '''
             }
           }
         }
 
-        stage('Run Android Tests') {
-          // This 'when' block adds the conditional logic ⚙️
+        stage('Setup ADB Proxy') {
+          steps {
+            // Use socat to forward ADB commands from the container to the host.
+            // The process ID is saved to a file to ensure it can be killed later.
+            sh 'socat TCP-LISTEN:5037,fork TCP:host.docker.internal:5037 & echo $! > socat.pid'
+          }
+        }
+
+        stage('Run Instrumented Tests') {
+          // This 'when' block ensures this stage only runs if a device is connected.
           when {
             expression {
-              // This script checks for connected devices.
-              // 'returnStatus: true' ensures the build doesn't fail if no devices are found;
-              // it just returns the command's exit code.
+              // Checks for connected devices. 'returnStatus: true' prevents the build from
+              // failing if no devices are found (grep returns 1). A return code of 0 means a match was found.
               def adbCheck = sh(script: 'adb devices | grep -w "device"', returnStatus: true)
-              
-              // The 'grep' command returns 0 if it finds a match (a device).
-              // The stage will only run if this expression is true.
               return adbCheck == 0
             }
           }
           steps {
-            dir('android-app') {
-              script {
-                // Ensure ADB server is responsive and device is ready
-                sh '''
-                  echo "Preparing ADB connection for tests..."
-                  adb devices -l
-                  adb shell echo "Device connection test successful"
-                  
-                  echo "Starting Android tests with timeout..."
-                '''
-                
-                // Run tests with timeout to prevent hanging
-                timeout(time: 2, unit: 'MINUTES') {
-                  sh './gradlew connectedDebugAndroidTest --info --stacktrace'
-                }
+            dir(env.APP_DIR) {
+              // A timeout prevents hung tests from blocking the pipeline indefinitely.
+              timeout(time: 2, unit: 'MINUTES') {
+                sh './gradlew connectedDebugAndroidTest --info --stacktrace'
               }
             }
           }
         }
 
-        stage('Archive APK') {
+        stage('Archive Artifacts') {
           steps {
-            archiveArtifacts artifacts: 'android-app/app/build/outputs/apk/debug/*.apk', followSymlinks: false
+            // Save the generated APK as a build artifact for later use.
+            archiveArtifacts artifacts: "${env.APP_DIR}/app/build/outputs/apk/debug/*.apk", followSymlinks: false
           }
         }
-      }
+      } // End of nested stages
 
+      // This post-build section handles all cleanup.
       post {
+        // 'always' ensures these steps run, whether the build succeeded, failed, or was aborted.
         always {
-          // Ensure cleanup happens even if build fails
           script {
-            try {
-              dir('android-app') {
-                sh 'chown -R 1000:1000 . || true'
-                sh 'chmod -R u+w . || true'
-              }
-            } catch (Exception e) {
-              echo "Cleanup failed: ${e.getMessage()}"
+            echo 'Performing post-build cleanup...'
+
+            // 1. Safely stop the socat ADB proxy and remove the PID file.
+            sh "if [ -f socat.pid ]; then kill \$(cat socat.pid); rm socat.pid; fi"
+
+            // 2. Fix workspace file permissions that were changed by running as root inside Docker.
+            //    The '|| true' ensures the build doesn't fail if these commands fail for any reason.
+            dir(env.APP_DIR) {
+              sh 'chown -R 1000:1000 . || true'
+              sh 'chmod -R u+w . || true'
             }
           }
         }
       }
-    }
-  }
+    } // End of 'Build, Test & Archive' stage
+  } // End of all stages
 }
